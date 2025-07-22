@@ -7975,3 +7975,23 @@ Item *Item_equal::multiple_equality_transformer(THD *thd, uchar *arg)
     break;
   }
 }
+
+
+Item *Item_func_isnull::grouping_field_transformer_for_where(THD *thd,
+                                                             uchar *arg)
+  {
+    if (const_item_cache)
+    {
+      Json_writer_object trace_wrapper(thd);
+      Json_writer_object trace_xform(thd,
+                                     "grouping_field_transformer_for_where");
+      trace_xform.add("before", args[0]);
+
+      if (Item *item= new (thd->mem_root) Item_int(thd, 1))
+        args[0]= item;
+      else
+        return 0;
+      trace_xform.add("after", args[0]);
+    }
+    return this;
+  }

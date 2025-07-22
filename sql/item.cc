@@ -8171,7 +8171,10 @@ Item_direct_view_ref::grouping_field_transformer_for_where(THD *thd,
   st_select_lex *sel= (st_select_lex *)arg;
   Field_pair *gr_field= find_matching_field_pair(this,
                                                  sel->grouping_tmp_fields);
-  return gr_field->corresponding_item->deep_copy_with_checks(thd);
+  if (gr_field)
+    return gr_field->corresponding_item->deep_copy_with_checks(thd);
+  else
+    return this;
 }
 
 void Item_field::print(String *str, enum_query_type query_type)

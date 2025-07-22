@@ -2859,6 +2859,7 @@ public:
       const_item_cache= args[0]->const_item();
     }
   }
+  Item *grouping_field_transformer_for_where(THD *thd, uchar *arg) override;
   COND *remove_eq_conds(THD *thd, Item::cond_result *cond_value,
                         bool top_level) override;
   table_map not_null_tables() const override { return 0; }
