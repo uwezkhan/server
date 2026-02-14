@@ -1405,7 +1405,9 @@ bool buf_pool_t::create() noexcept
     memory_unaligned= nullptr;
     goto oom;
   }
-  ut_dontdump(memory_unaligned, size_unaligned, true);
+#if defined __linux__ || defined __FreeBSD__
+  core_advise();
+#endif
 #else
   update_malloc_size(actual_size, 0);
 #endif
@@ -1962,9 +1964,11 @@ ATTRIBUTE_COLD void buf_pool_t::resize(size_t size, THD *thd) noexcept
       return;
     }
 
-    ut_dontdump(memory + old_size, size - old_size, true);
     size_in_bytes_requested= size;
     size_in_bytes= size;
+#if defined __linux__ || defined __FreeBSD__
+    core_advise();
+#endif
 
     {
       const size_t ssize= srv_page_size_shift - UNIV_PAGE_SIZE_SHIFT_MIN;
