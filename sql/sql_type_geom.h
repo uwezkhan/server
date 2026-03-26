@@ -74,8 +74,8 @@ public:
   enum_field_types field_type() const override { return MYSQL_TYPE_GEOMETRY; }
   uint get_column_attributes() const override
   { return ATTR_LENGTH | ATTR_DEC | ATTR_SRID; }
-  bool Item_append_extended_type_info(Send_field_extended_metadata *to,
-                                      const Item *item) const override
+  bool append_extended_type_info(Send_field_extended_metadata *to) const
+         override
   {
     LEX_CSTRING tmp= extended_metadata_data_type_name();
     return tmp.length ? to->set_data_type_name(tmp) : false;

@@ -6974,7 +6974,7 @@ void Item::init_make_send_field(Send_field *tmp_field,
     tmp_field->flags |= UNSIGNED_FLAG;
   static_cast<Send_field_extended_metadata>(*tmp_field)=
     Send_field_extended_metadata();
-  h->Item_append_extended_type_info(tmp_field, this);
+  h->append_extended_type_info(tmp_field);
 }
 
 void Item::make_send_field(THD *thd, Send_field *tmp_field)

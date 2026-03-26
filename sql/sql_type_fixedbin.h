@@ -1129,8 +1129,8 @@ public:
   {
     return PROTOCOL_SEND_STRING;
   }
-  bool Item_append_extended_type_info(Send_field_extended_metadata *to,
-                                      const Item *item) const override
+  bool append_extended_type_info(Send_field_extended_metadata *to) const
+         override
   {
     return to->set_data_type_name(name().lex_cstring());
   }

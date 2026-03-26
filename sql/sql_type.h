@@ -4032,8 +4032,7 @@ public:
     return field_type();
   }
   virtual protocol_send_type_t protocol_send_type() const= 0;
-  virtual bool Item_append_extended_type_info(Send_field_extended_metadata *to,
-                                              const Item *item) const
+  virtual bool append_extended_type_info(Send_field_extended_metadata *to) const
   {
     return false;
   }
