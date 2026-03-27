@@ -302,15 +302,16 @@ private:
   {
     for (bool tried_mkdir{false};;)
     {
-      /* TODO: copy the file to target safely, even when there may be
-      concurrent buf_page_t::flush() to this tablespace */
-
 #ifdef _WIN32
+      if (node->space->start_backup(node->space->size))
+        os_aio_wait_until_no_pending_writes(false);
       std::string path{target};
       path.push_back('/');
       path.append(node->name);
-      if (!CopyFileExA(node->name, path.c_str(), nullptr, nullptr, nullptr,
-                       COPY_FILE_NO_BUFFERING))
+      bool ok= CopyFileExA(node->name, path.c_str(), nullptr, nullptr, nullptr,
+                           COPY_FILE_NO_BUFFERING);
+      node->space->stop_backup();
+      if (!ok)
       {
         unsigned long err= GetLastError();
         if (err == ERROR_PATH_NOT_FOUND && !tried_mkdir &&
@@ -337,7 +338,11 @@ private:
 #else
       int f;
 # ifdef __APPLE__
-      if (!fclonefileat(node->handle, target, node->name, 0))
+      if (node->space->start_backup(node->space->size))
+        os_aio_wait_until_no_pending_writes(false);
+      f= fclonefileat(node->handle, target, node->name, 0);
+      node->space->stop_backup();
+      if (!f)
         break;
       switch (errno) {
       case ENOENT:
@@ -373,13 +378,20 @@ private:
         goto fail;
       }
 # ifdef __APPLE__
+      if (node->space->start_backup(node->space->size))
+        os_aio_wait_until_no_pending_writes(false);
       int err=
         fcopyfile(node->handle, f, nullptr, COPYFILE_ALL | COPYFILE_CLONE);
-      if (close(f) || err)
+      f= close(f) || err;
+      node->space->stop_backup();
+      if (f)
         goto fail;
 # else
       do
       {
+        /* FIXME: push down page-granularity locking */
+        if (node->space->start_backup(node->space->size))
+          os_aio_wait_until_no_pending_writes(false);
         const off_t size= off_t{node->size} * node->space->physical_size();
 #  if defined __linux__ || defined __FreeBSD__
         if (!copy<copy_step>(node->handle, f, size))
@@ -396,11 +408,13 @@ private:
         if (!err)
           continue;
 #  endif
+        node->space->stop_backup();
         std::ignore= close(f);
         goto fail;
       }
       while (false);
 
+      node->space->stop_backup();
       if (close(f))
         goto fail;
 # endif

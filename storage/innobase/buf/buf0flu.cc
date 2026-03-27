@@ -954,6 +954,13 @@ uint32_t fil_space_t::flush_freed(bool writable) noexcept
   mysql_mutex_assert_not_owner(&buf_pool.flush_list_mutex);
   mysql_mutex_assert_not_owner(&buf_pool.mutex);
 
+  /* Note: There is no need to invoke start_writing() or
+  stop_writing() here, because we are only overwriting freed (garbage)
+  pages. If backup reads a torn page, it will also have copied a
+  corresponding FREE_PAGE record, which would be applied on recovery.
+  Besides, the freed page should never be reachable from other pages
+  that are part of the snapshot. */
+
   const bool punch_hole= chain.start->punch_hole == 1;
   if (!punch_hole && !srv_immediate_scrub_data_uncompressed)
     return 0;
@@ -1327,6 +1334,9 @@ static void buf_flush_LRU_list_batch(ulint max, flush_counters_t *n,
           if (space)
             space->release();
           auto p= buf_flush_space(space_id);
+#if 0 // TODO
+          space->start_writing();
+#endif
           space= p.first;
           last_space_id= space_id;
           if (!space)
@@ -1345,6 +1355,9 @@ static void buf_flush_LRU_list_batch(ulint max, flush_counters_t *n,
       }
       else if (space->is_stopping_writes())
       {
+#if 0 // TODO
+        space->stop_writing();
+#endif
         space->release();
         space= nullptr;
       no_space:
@@ -1644,6 +1657,10 @@ bool buf_flush_list_space(fil_space_t *space, ulint *n_flushed) noexcept
     mysql_mutex_lock(&buf_pool.mutex);
     if (written)
       buf_pool.stat.n_pages_written+= written;
+#if 0 // TODO: do not call this from multiple threads!
+    /* TODO: check the page numbers */
+    space->start_writing();
+#endif
   }
   mysql_mutex_lock(&buf_pool.flush_list_mutex);
 
@@ -1731,7 +1748,12 @@ done:
     *n_flushed= n_flush;
 
   if (acquired)
+  {
+#if 0// TODO
+    space->stop_writing();
+#endif
     space->release();
+  }
 
   if (space->is_being_imported())
     os_aio_wait_until_no_pending_writes(true);

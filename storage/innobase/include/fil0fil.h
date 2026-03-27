@@ -408,6 +408,13 @@ private:
   /** Whether any corruption of this tablespace has been reported */
   mutable std::atomic_flag is_corrupted= ATOMIC_FLAG_INIT;
 
+  /** BACKUP SERVER flag in write_or_backup */
+  static constexpr uint8_t BACKUP{128};
+  /** whether there is a pending write or backup */
+  std::atomic<uint8_t> write_or_backup{0};
+  /** last page number being backed up, or 0 if none */
+  std::atomic<uint32_t> backup_last_page{0};
+
 public:
   /** mutex to protect freed_ranges and last_freed_lsn */
   std::mutex freed_range_mutex;
@@ -1043,6 +1050,43 @@ public:
     /** opening a file for ALTER TABLE...IMPORT TABLESPACE */
     VALIDATE_IMPORT
   };
+
+  /** Note that writes are being submitted to the tablespace.
+  @return whether a backup is pending */
+  bool start_writing() noexcept
+  {
+    uint8_t wb{write_or_backup.fetch_add(1, std::memory_order_acq_rel)};
+    ut_ad(!(wb & ~BACKUP));
+    return wb & BACKUP;
+  }
+  /** Note that we there are no more pending writes to the tablespace. */
+  void stop_writing() noexcept
+  {
+    ut_d(uint8_t wb=) write_or_backup.fetch_sub(1, std::memory_order_release);
+    ut_ad(wb & ~BACKUP);
+  }
+
+  /** Note that we backing up some pages of the underlying files.
+  @param last_page   the last page that is being backed up */
+  bool start_backup(uint32_t last_page) noexcept
+  {
+    backup_last_page.store(last_page, std::memory_order_relaxed);
+    uint8_t wb{write_or_backup.fetch_add(BACKUP, std::memory_order_acq_rel)};
+    ut_ad(!(wb & BACKUP));
+    return wb & ~BACKUP;
+  }
+  /** Note that we are not currently backing up the underlying files. */
+  void stop_backup() noexcept
+  {
+    backup_last_page.store(0, std::memory_order_relaxed);
+    ut_d(uint8_t wb=)
+      write_or_backup.fetch_sub(BACKUP, std::memory_order_release);
+    ut_ad(wb & BACKUP);
+  }
+  /** @return the last page that is being backed up
+  @retval 0 if no backup is in progress */
+  uint32_t last_page_in_backup() const noexcept
+  { return backup_last_page.load(std::memory_order_relaxed); }
 
   /** Update the data structures on write completion */
   void complete_write() noexcept;
