@@ -7956,7 +7956,7 @@ void TABLE::mark_columns_needed_for_update()
   }
   mark_columns_per_binlog_row_image();
   if (need_signal)
-    file->column_bitmaps_signal();
+    file->column_bitmaps_signal(true);
   DBUG_VOID_RETURN;
 }
 

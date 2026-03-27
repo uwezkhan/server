@@ -4055,7 +4055,7 @@ public:
     a ha_rnd_init() or ha_index_init(), write_row(), update_row or delete_row()
     as there may be several calls to this routine.
   */
-  virtual void column_bitmaps_signal();
+  virtual void column_bitmaps_signal(bool mark_for_update= false);
   /*
     We have to check for inited as some engines, like innodb, sets
     active_index during table scan.
