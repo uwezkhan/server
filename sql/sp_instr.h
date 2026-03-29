@@ -420,6 +420,8 @@ public:
       m_lex_keeper.~sp_lex_keeper();
       free_root(m_mem_root_for_reparsing, MYF(0));
       m_mem_root_for_reparsing= nullptr;
+      if (m_cursor_free_list)
+        *m_cursor_free_list= nullptr;
     }
   }
 
@@ -497,6 +499,14 @@ private:
     caused failure of SP-instruction execution
   */
   MEM_ROOT *m_mem_root_for_reparsing;
+
+  /**
+    Address of the pointer cursor_lex->free_list. The data member
+    cursor_lex->free_list points to a list of items created on re-parsing
+    the cursor's statement. It is used for nullifying the cursor_lex->free_list
+    right after the memory root for statement re-parsing has been deallocated.
+  */
+  Item **m_cursor_free_list= {nullptr};
 
   /**
     Clean up items previously created on behalf of the current instruction.

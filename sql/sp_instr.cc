@@ -878,7 +878,6 @@ LEX* sp_lex_instr::parse_expr(THD *thd, sp_head *sp, LEX *sp_instr_lex)
   // Create a new LEX and initialize it.
 
   LEX *lex_saved= thd->lex;
-  Item **cursor_free_list= nullptr;
   st_lex_local *lex_local= nullptr;
 
   /*
@@ -933,7 +932,12 @@ LEX* sp_lex_instr::parse_expr(THD *thd, sp_head *sp, LEX *sp_instr_lex)
     /* Nullify free_list to don't have a dangling pointer */
     cursor_lex->free_list= nullptr;
 
-    cursor_free_list= &cursor_lex->free_list;
+    /*
+      Remember the address of the cursor's lex free_list to update the pointer
+      after cursor's statement be re-parsed so that it points to the new items
+      created during parsing
+    */
+    m_cursor_free_list= &cursor_lex->free_list;
     cursor_lex->mem_root= m_mem_root_for_reparsing;
     DBUG_ASSERT(thd->lex == sp_instr_lex);
     lex_start(thd);
@@ -986,12 +990,12 @@ LEX* sp_lex_instr::parse_expr(THD *thd, sp_head *sp, LEX *sp_instr_lex)
       setup_table_fields_for_trigger(thd, sp,
                                      saved_ptr_to_next_trg_items_list);
 
-    if (cursor_free_list)
+    if (m_cursor_free_list)
       /*
         Update sp_lex_cursor::free_list to point to a list of items
         just created on re-parsing the cursor's statement.
       */
-      *cursor_free_list= thd->free_list;
+      *m_cursor_free_list= thd->free_list;
     else
     {
       /*
