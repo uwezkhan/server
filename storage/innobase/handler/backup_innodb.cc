@@ -316,7 +316,7 @@ private:
       path.append(node->name);
       bool ok= CopyFileExA(node->name, path.c_str(), nullptr, nullptr, nullptr,
                            COPY_FILE_NO_BUFFERING);
-      backup_end(node->space);
+      backup_stop(node->space);
       if (!ok)
       {
         unsigned long err= GetLastError();
