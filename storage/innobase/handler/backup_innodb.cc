@@ -203,6 +203,7 @@ public:
       mysql_mutex_lock(&fil_system.mutex);
       for (fil_space_t &space : fil_system.space_list)
         if (space.id < SRV_SPACE_ID_UPPER_BOUND &&
+            !space.is_being_imported() &&
             /* FIXME: how to initialize create_lsn for old files, to
             have efficient incremental backup?
             fil_node_t::read_page0() cannot assign it from
@@ -290,6 +291,16 @@ public:
   }
 
 private:
+  /** Safely start backing up a tablespace file */
+  static void backup_start(fil_space_t *space) noexcept
+  {
+    if (space->backup_start(space->size))
+      os_aio_wait_until_no_pending_writes(false);
+  }
+  /* Stop backing up a tablespace */
+  static void backup_stop(fil_space_t *space) noexcept
+  { space->backup_stop(); }
+
   /**
      Back up a persistent InnoDB data file.
      @param node  InnoDB data file
@@ -299,14 +310,13 @@ private:
     for (bool tried_mkdir{false};;)
     {
 #ifdef _WIN32
-      if (node->space->start_backup(node->space->size))
-        os_aio_wait_until_no_pending_writes(false);
+      backup_start(node->space);
       std::string path{target};
       path.push_back('/');
       path.append(node->name);
       bool ok= CopyFileExA(node->name, path.c_str(), nullptr, nullptr, nullptr,
                            COPY_FILE_NO_BUFFERING);
-      node->space->stop_backup();
+      backup_end(node->space);
       if (!ok)
       {
         unsigned long err= GetLastError();
@@ -334,10 +344,9 @@ private:
 #else
       int f;
 # ifdef __APPLE__
-      if (node->space->start_backup(node->space->size))
-        os_aio_wait_until_no_pending_writes(false);
+      backup_start(node->space);
       f= fclonefileat(node->handle, target, node->name, 0);
-      node->space->stop_backup();
+      backup_stop(node->space);
       if (!f)
         break;
       switch (errno) {
@@ -374,20 +383,18 @@ private:
         goto fail;
       }
 # ifdef __APPLE__
-      if (node->space->start_backup(node->space->size))
-        os_aio_wait_until_no_pending_writes(false);
+      backup_start(node->space);
       int err=
         fcopyfile(node->handle, f, nullptr, COPYFILE_ALL | COPYFILE_CLONE);
       f= close(f) || err;
-      node->space->stop_backup();
+      backup_stop(node->space);
       if (f)
         goto fail;
 # else
       do
       {
         /* FIXME: push down page-granularity locking */
-        if (node->space->start_backup(node->space->size))
-          os_aio_wait_until_no_pending_writes(false);
+        backup_start(node->space);
         const off_t size= off_t{node->size} * node->space->physical_size();
 #  if defined __linux__ || defined __FreeBSD__
         if (!copy<copy_step>(node->handle, f, size))
@@ -404,13 +411,13 @@ private:
         if (!err)
           continue;
 #  endif
-        node->space->stop_backup();
+        backup_stop(node->space);
         std::ignore= close(f);
         goto fail;
       }
       while (false);
 
-      node->space->stop_backup();
+      backup_stop(node->space);
       if (close(f))
         goto fail;
 # endif

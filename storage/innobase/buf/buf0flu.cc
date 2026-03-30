@@ -954,8 +954,8 @@ uint32_t fil_space_t::flush_freed(bool writable) noexcept
   mysql_mutex_assert_not_owner(&buf_pool.flush_list_mutex);
   mysql_mutex_assert_not_owner(&buf_pool.mutex);
 
-  /* Note: There is no need to invoke start_writing() or
-  stop_writing() here, because we are only overwriting freed (garbage)
+  /* Note: There is no need to invoke writing_start() or
+  writing_stop() here, because we are only overwriting freed (garbage)
   pages. If backup reads a torn page, it will also have copied a
   corresponding FREE_PAGE record, which would be applied on recovery.
   Besides, the freed page should never be reachable from other pages
@@ -1236,6 +1236,16 @@ ATTRIBUTE_COLD static size_t buf_flush_LRU_to_withdraw(size_t to_withdraw,
   return to_withdraw;
 }
 
+/** Stop writing to a tablespace.
+@param space   tablespace
+@return nullptr */
+static fil_space_t *writing_stop(fil_space_t *space) noexcept
+{
+  space->writing_stop();
+  space->release();
+  return nullptr;
+}
+
 /** Flush dirty blocks from the end buf_pool.LRU,
 and move clean blocks to buf_pool.free.
 @param max         maximum number of blocks to flush
@@ -1253,6 +1263,7 @@ static void buf_flush_LRU_list_batch(ulint max, flush_counters_t *n,
     ? 0 : buf_pool.flush_neighbors;
   fil_space_t *space= nullptr;
   uint32_t last_space_id= FIL_NULL;
+  uint32_t backup_page_end= 0;
   static_assert(FIL_NULL > SRV_TMP_SPACE_ID, "consistency");
   static_assert(FIL_NULL > SRV_SPACE_ID_UPPER_BOUND, "consistency");
 
@@ -1332,11 +1343,8 @@ static void buf_flush_LRU_list_batch(ulint max, flush_counters_t *n,
           buf_pool.lru_hp.set(bpage);
           mysql_mutex_unlock(&buf_pool.mutex);
           if (space)
-            space->release();
+            writing_stop(space);
           auto p= buf_flush_space(space_id);
-#if 0 // TODO
-          space->start_writing();
-#endif
           space= p.first;
           last_space_id= space_id;
           if (!space)
@@ -1344,6 +1352,10 @@ static void buf_flush_LRU_list_batch(ulint max, flush_counters_t *n,
             mysql_mutex_lock(&buf_pool.mutex);
             goto no_space;
           }
+
+          backup_page_end= space->writing_start()
+            ? space->backup_page_end() : 0;
+
           mysql_mutex_lock(&buf_pool.mutex);
           buf_pool.stat.n_pages_written+= p.second;
         }
@@ -1355,11 +1367,7 @@ static void buf_flush_LRU_list_batch(ulint max, flush_counters_t *n,
       }
       else if (space->is_stopping_writes())
       {
-#if 0 // TODO
-        space->stop_writing();
-#endif
-        space->release();
-        space= nullptr;
+        space= writing_stop(space);
       no_space:
         mysql_mutex_lock(&buf_pool.flush_list_mutex);
         buf_flush_discard_page(bpage);
@@ -1376,7 +1384,8 @@ static void buf_flush_LRU_list_batch(ulint max, flush_counters_t *n,
         break;
       }
 
-      if (neighbors && space->is_rotational() && UNIV_LIKELY(!to_withdraw) &&
+      if (neighbors && UNIV_LIKELY(!to_withdraw) &&
+          UNIV_LIKELY(!backup_page_end) && space->is_rotational() && 
           /* Skip neighbourhood flush from LRU list if we haven't yet reached
           half of the free page target. */
           UT_LIST_GET_LEN(buf_pool.free) * 2 >= free_limit)
@@ -1388,7 +1397,7 @@ static void buf_flush_LRU_list_batch(ulint max, flush_counters_t *n,
       flush:
         if (UNIV_UNLIKELY(to_withdraw != 0))
           to_withdraw= buf_flush_LRU_to_withdraw(to_withdraw, *bpage);
-        if (bpage->flush(space))
+        if (bpage->id().page_no() >= backup_page_end && bpage->flush(space))
           ++n->flushed;
         else
           continue;
@@ -1404,7 +1413,7 @@ static void buf_flush_LRU_list_batch(ulint max, flush_counters_t *n,
   buf_pool.lru_hp.set(nullptr);
 
   if (space)
-    space->release();
+    writing_stop(space);
 
   if (scanned)
   {
@@ -1451,6 +1460,7 @@ static ulint buf_do_flush_list_batch(ulint max_n, lsn_t lsn) noexcept
     ? 0 : buf_pool.flush_neighbors;
   fil_space_t *space= nullptr;
   uint32_t last_space_id= FIL_NULL;
+  uint32_t backup_page_end= 0;
   static_assert(FIL_NULL > SRV_TMP_SPACE_ID, "consistency");
   static_assert(FIL_NULL > SRV_SPACE_ID_UPPER_BOUND, "consistency");
 
@@ -1522,10 +1532,12 @@ static ulint buf_do_flush_list_batch(ulint max_n, lsn_t lsn) noexcept
           mysql_mutex_unlock(&buf_pool.flush_list_mutex);
           mysql_mutex_unlock(&buf_pool.mutex);
           if (space)
-            space->release();
+            writing_stop(space);
           auto p= buf_flush_space(space_id);
           space= p.first;
           last_space_id= space_id;
+          backup_page_end= space && space->writing_start()
+            ? space->backup_page_end() : 0;
           mysql_mutex_lock(&buf_pool.mutex);
           buf_pool.stat.n_pages_written+= p.second;
           mysql_mutex_lock(&buf_pool.flush_list_mutex);
@@ -1534,10 +1546,7 @@ static ulint buf_do_flush_list_batch(ulint max_n, lsn_t lsn) noexcept
           ut_ad(!space);
       }
       else if (space->is_stopping_writes())
-      {
-        space->release();
-        space= nullptr;
-      }
+        space= writing_stop(space);
 
       if (!space)
         buf_flush_discard_page(bpage);
@@ -1546,10 +1555,12 @@ static ulint buf_do_flush_list_batch(ulint max_n, lsn_t lsn) noexcept
         mysql_mutex_unlock(&buf_pool.flush_list_mutex);
         do
         {
-          if (neighbors && space->is_rotational())
+          if (neighbors && UNIV_LIKELY(!backup_page_end) &&
+              space->is_rotational())
             count+= buf_flush_try_neighbors(space, page_id, bpage,
                                             neighbors == 1, count, max_n);
-          else if (bpage->flush(space))
+          else if (bpage->id().page_no() >= backup_page_end &&
+                   bpage->flush(space))
             ++count;
           else
             continue;
@@ -1567,7 +1578,7 @@ static ulint buf_do_flush_list_batch(ulint max_n, lsn_t lsn) noexcept
   buf_pool.flush_hp.set(nullptr);
 
   if (space)
-    space->release();
+    writing_stop(space);
 
   if (scanned)
   {
@@ -1657,11 +1668,8 @@ bool buf_flush_list_space(fil_space_t *space, ulint *n_flushed) noexcept
     mysql_mutex_lock(&buf_pool.mutex);
     if (written)
       buf_pool.stat.n_pages_written+= written;
-#if 0 // TODO: do not call this from multiple threads!
-    /* TODO: check the page numbers */
-    space->start_writing();
-#endif
   }
+
   mysql_mutex_lock(&buf_pool.flush_list_mutex);
 
   for (buf_page_t *bpage= UT_LIST_GET_LAST(buf_pool.flush_list); bpage; )
@@ -1704,17 +1712,28 @@ bool buf_flush_list_space(fil_space_t *space, ulint *n_flushed) noexcept
           acquired= false;
           goto was_freed;
         }
+
         mysql_mutex_unlock(&buf_pool.flush_list_mutex);
-        if (bpage->flush(space))
+
+        if (UNIV_UNLIKELY(space->writing_start()) &&
+            space->backup_page_end() < bpage->id().page_no())
+        {
+          space->writing_stop();
+        skip:
+          mysql_mutex_lock(&buf_pool.mutex);
+          mysql_mutex_lock(&buf_pool.flush_list_mutex);
+          may_have_skipped= true;
+          goto done;
+        }
+
+        const bool written{bpage->flush(space)};
+        space->writing_stop();
+
+        if (written)
         {
           ++n_flush;
           if (!--max_n_flush)
-          {
-            mysql_mutex_lock(&buf_pool.mutex);
-            mysql_mutex_lock(&buf_pool.flush_list_mutex);
-            may_have_skipped= true;
-            goto done;
-          }
+            goto skip;
           mysql_mutex_lock(&buf_pool.mutex);
         }
       }
@@ -1748,12 +1767,7 @@ done:
     *n_flushed= n_flush;
 
   if (acquired)
-  {
-#if 0// TODO
-    space->stop_writing();
-#endif
     space->release();
-  }
 
   if (space->is_being_imported())
     os_aio_wait_until_no_pending_writes(true);
