@@ -149,6 +149,17 @@ disconnect foo;
 install soname 'ha_example.so';
 set global session_track_system_variables='sql_slave_skip_counter,character_set_client,example_int_var';
 select @@global.session_track_system_variables;
+enable_session_track_info;
+
+connect foo,localhost,root;
+select @@session.session_track_system_variables;
+
+connection default;
+disconnect foo;
+
+set global session_track_system_variables='sql_slave_skip_counter,myisam_block_size,character_set_client,example_int_var';
+select @@global.session_track_system_variables;
+enable_session_track_info;
 
 connect foo,localhost,root;
 select @@session.session_track_system_variables;
