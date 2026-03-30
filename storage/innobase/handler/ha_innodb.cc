@@ -19756,7 +19756,9 @@ static MYSQL_SYSVAR_BOOL(data_file_write_through, fil_system.write_through,
 static void innodb_log_archive_update(THD *thd, st_mysql_sys_var*,
                                       void *, const void *save) noexcept
 {
+  mysql_mutex_unlock(&LOCK_global_system_variables);
   log_sys.set_archive(*static_cast<const my_bool*>(save), thd);
+  mysql_mutex_lock(&LOCK_global_system_variables);
 }
 
 static MYSQL_SYSVAR_BOOL(log_archive, log_sys.archive,

@@ -172,12 +172,10 @@ public:
   */
   int init(THD *thd, IF_WIN(const char*,int) target) noexcept
   {
-    mysql_mutex_lock(&LOCK_global_system_variables);
     mutex.init();
     mutex.wr_lock();
     was_archived= log_sys.archive;
     bool fail{log_sys.set_archive(true, thd)};
-    mysql_mutex_unlock(&LOCK_global_system_variables);
 
     if (!fail)
     {
@@ -283,14 +281,12 @@ public:
   */
   void fini(THD *thd) noexcept
   {
-    mysql_mutex_lock(&LOCK_global_system_variables);
     ut_d(mutex.wr_lock());
     ut_ad(queue.empty());
     ut_d(mutex.wr_unlock());
     mutex.destroy();
     if (!was_archived)
       log_sys.set_archive(false, thd);
-    mysql_mutex_unlock(&LOCK_global_system_variables);
   }
 
 private:
